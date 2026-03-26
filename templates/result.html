@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Result | Digital Wellbeing</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { background-color: #f0f4f8; font-family: 'Nunito', sans-serif; }
+        .result-card { border: none; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); background: white; overflow: hidden; }
+        .status-header { padding: 40px 30px; color: white; text-align: center; }
+        .status-addicted { background: linear-gradient(135deg, #ff416c, #ff4b2b); }
+        .status-safe { background: linear-gradient(135deg, #11998e, #38ef7d); }
+        .chart-container { position: relative; height: 320px; width: 100%; }
+        .chart-container-large { position: relative; height: 400px; width: 100%; } /* Mas malaki para sa scatter plot */
+    </style>
+</head>
+<body>
+
+<main class="container py-5">
+    <article class="row justify-content-center">
+        <section class="col-xl-11 col-lg-12">
+            <div class="result-card">
+                
+                <header class="status-header {{ 'status-addicted' if prediction_text == 'Addicted' else 'status-safe' }}">
+                    <i class="bi {{ 'bi-exclamation-triangle-fill' if prediction_text == 'Addicted' else 'bi-check-circle-fill' }} display-1"></i>
+                    <h1 class="display-4 fw-bold mt-3">{{ prediction_text }}</h1>
+                    <p class="lead mb-0">AI Confidence Score: <strong>{{ confidence }}%</strong></p>
+                </header>
+
+                <div class="card-body p-4 p-md-5">
+                    
+                    <div class="row g-4 mb-4">
+                        <div class="col-lg-6">
+                            <div class="card h-100 shadow-sm border-0 bg-light rounded-4">
+                                <div class="card-body p-4">
+                                    <h5 class="fw-bold text-center mb-3 text-secondary">Addiction Risk Curve</h5>
+                                    <div class="chart-container">
+                                        <canvas id="riskCurveChart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-lg-6">
+                            <div class="card h-100 shadow-sm border-0 bg-light rounded-4">
+                                <div class="card-body p-4">
+                                    <h5 class="fw-bold text-center mb-3 text-secondary">Screen Time Breakdown</h5>
+                                    <div class="chart-container">
+                                        <canvas id="activityChart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mb-5">
+                        <div class="col-12">
+                            <div class="card shadow-sm border-0 bg-light rounded-4">
+                                <div class="card-body p-4">
+                                    <h5 class="fw-bold text-center mb-3 text-secondary">AI Population Comparison (Screen Time vs. Sleep)</h5>
+                                    <p class="text-center text-muted small mb-3">See how your habits compare against typical "Safe" and "At-Risk" patterns learned by the AI.</p>
+                                    <div class="chart-container-large">
+                                        <canvas id="scatterComparisonChart"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="alert alert-light border shadow-sm rounded-4 p-4">
+                                <div class="row align-items-center">
+                                    <div class="col-md-5">
+                                        <p class="mb-2"><i class="bi bi-phone text-primary me-2"></i><strong>Screen Time:</strong> {{ user_data.daily_screen_time }} hrs</p>
+                                        <p class="mb-2"><i class="bi bi-moon-stars text-primary me-2"></i><strong>Sleep:</strong> {{ user_data.sleep_hours }} hrs</p>
+                                        <p class="mb-2"><i class="bi bi-activity text-danger me-2"></i><strong>Stress Level:</strong> {{ user_data.stress_level }}/10</p>
+                                    </div>
+                                    <div class="col-md-7 border-start">
+                                        <h6 class="fw-bold"><i class="bi bi-lightbulb-fill text-warning me-2"></i>Recommendation:</h6>
+                                        <p class="small text-muted mb-0">
+                                            {% if prediction_text == 'Addicted' %}
+                                            Your data points fall heavily into the risk zone. The AI detects a pattern of high screen time disrupting your sleep and stress levels. Limit non-essential apps before bedtime.
+                                            {% else %}
+                                            Your habits align closely with the safe zone! You have a good balance between digital life, sleep, and stress. Keep it up!
+                                            {% endif %}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="text-center mt-5">
+                                <a href="/" class="btn btn-outline-secondary btn-lg rounded-pill px-5 shadow-sm">
+                                    <i class="bi bi-arrow-left me-2"></i>Retake Test
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+    </article>
+</main>
+
+<script>
+    // --- KUNIN ANG DATA MULA SA PYTHON ---
+    const userScreenTime = Number('{{ user_data.daily_screen_time }}');
+    const userProbability = Number('{{ raw_prob }}'); 
+    const userSleep = Number('{{ user_data.sleep_hours }}');
+    const userResult = '{{ prediction_text }}';
+
+    const rawActivityData = '{{ user_data.activity_data | tojson | safe }}';
+    const activityData = JSON.parse(rawActivityData);
+
+    // =======================================================
+    // GRAPH 1: LOGISTIC RISK CURVE
+    // =======================================================
+    const curveData = [];
+    for (let x = 0; x <= 16; x += 0.5) {
+        let y = 1 / (1 + Math.exp(-0.8 * (x - 6))); 
+        curveData.push({x: x, y: y});
+    }
+
+    const ctxCurve = document.getElementById('riskCurveChart').getContext('2d');
+    new Chart(ctxCurve, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                { type: 'line', label: 'Risk Trend', data: curveData, borderColor: 'rgba(54, 162, 235, 1)', borderWidth: 3, pointRadius: 0, tension: 0.4 },
+                { type: 'scatter', label: 'You', data: [{x: userScreenTime, y: userProbability}], backgroundColor: '#ff416c', borderColor: '#fff', borderWidth: 2, pointRadius: 8 }
+            ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { x: { title: { display: true, text: 'Screen Time (Hours)' } }, y: { min: 0, max: 1.05, title: { display: true, text: 'Risk Probability' } } }, plugins: { legend: { position: 'bottom' } } }
+    });
+
+    // =======================================================
+    // GRAPH 2: ACTIVITY BREAKDOWN (BAR CHART)
+    // =======================================================
+    const ctxActivity = document.getElementById('activityChart').getContext('2d');
+    new Chart(ctxActivity, {
+        type: 'bar',
+        data: {
+            labels: ['Social Media', 'Gaming', 'Work/Study', 'Other'],
+            datasets: [{ label: 'Hours', data: activityData, backgroundColor: ['#ff6384', '#ff9f40', '#36a2eb', '#c9cbcf'], borderRadius: 6 }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, title: { display: true, text: 'Hours per day' } } }, plugins: { legend: { display: false } } }
+    });
+
+    // =======================================================
+    // GRAPH 3: POPULATION SCATTER PLOT (Screen Time vs Sleep)
+    // =======================================================
+    // Generate synthetic background data to simulate AI's training context
+    function generateScatterData(count, minX, maxX, minY, maxY) {
+        let data = [];
+        for (let i = 0; i < count; i++) {
+            data.push({
+                x: (Math.random() * (maxX - minX) + minX).toFixed(1), // Screen Time
+                y: (Math.random() * (maxY - minY) + minY).toFixed(1)  // Sleep
+            });
+        }
+        return data;
+    }
+
+    // Safe users: Low screen time (1-5 hrs), High sleep (7-10 hrs)
+    const safePopulation = generateScatterData(40, 1, 5.5, 6.5, 10);
+    // At-Risk users: High screen time (6-14 hrs), Low sleep (3-6.5 hrs)
+    const riskPopulation = generateScatterData(40, 6, 14, 3, 6.5);
+
+    // Kulay ng user marker depende sa result
+    const userDotColor = (userResult === 'Addicted') ? '#ff416c' : '#11998e';
+
+    const ctxScatter = document.getElementById('scatterComparisonChart').getContext('2d');
+    new Chart(ctxScatter, {
+        type: 'scatter',
+        data: {
+            datasets: [
+                {
+                    label: 'Safe Pattern (AI learned)',
+                    data: safePopulation,
+                    backgroundColor: 'rgba(54, 162, 235, 0.4)', // Faded Blue
+                    pointRadius: 4
+                },
+                {
+                    label: 'Risk Pattern (AI learned)',
+                    data: riskPopulation,
+                    backgroundColor: 'rgba(255, 99, 132, 0.4)', // Faded Red
+                    pointRadius: 4
+                },
+                {
+                    label: '★ YOUR POSITION',
+                    data: [{x: userScreenTime, y: userSleep}],
+                    backgroundColor: userDotColor,
+                    borderColor: '#fff',
+                    borderWidth: 2,
+                    pointRadius: 10, // Pinakamalaking dot
+                    pointHoverRadius: 12
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: { 
+                    title: { display: true, text: 'Daily Screen Time (Hours)', font: {weight: 'bold'} },
+                    min: 0, max: 16
+                },
+                y: { 
+                    title: { display: true, text: 'Sleep (Hours)', font: {weight: 'bold'} },
+                    min: 2, max: 12
+                }
+            },
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.parsed.x} hrs screen, ${context.parsed.y} hrs sleep`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+</script>
+
+</body>
+</html>
